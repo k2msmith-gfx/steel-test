@@ -79,4 +79,37 @@ fn main() {
     bench("tex(u,v)  call_fn_by_name ", 100_000, || {
         vm.call_function_by_name_with_args("tex", vec![u.clone(), v.clone()]).unwrap();
     });
+
+    println!("\n--- benchmarks: dot_cos(a, b) ---");
+
+    vm.run("(define (dot-cos ax ay az bx by bz) (cos (+ (* ax bx) (* ay by) (* az bz))))").unwrap();
+
+    bench("dot-cos  parse+eval      ", 10_000, || {
+        vm.run("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap();
+    });
+
+    let dc_prog = vm.emit_raw_program_no_path("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap();
+    bench("dot-cos  run-only        ", 10_000, || {
+        vm.run_raw_program(dc_prog.clone()).unwrap();
+    });
+
+    let ax = SteelVal::NumV(0.6);
+    let ay = SteelVal::NumV(0.8);
+    let az = SteelVal::NumV(0.0);
+    let bx = SteelVal::NumV(0.8);
+    let by = SteelVal::NumV(0.6);
+    let bz = SteelVal::NumV(0.0);
+
+    bench("dot-cos  call_fn_by_name ", 100_000, || {
+        vm.call_function_by_name_with_args(
+            "dot-cos",
+            vec![ax.clone(), ay.clone(), az.clone(), bx.clone(), by.clone(), bz.clone()],
+        ).unwrap();
+    });
+
+    let result = vm.call_function_by_name_with_args(
+        "dot-cos",
+        vec![ax.clone(), ay.clone(), az.clone(), bx.clone(), by.clone(), bz.clone()],
+    ).unwrap();
+    println!("\ndot-cos(0.6,0.8,0, 0.8,0.6,0) = {result:?}");
 }
