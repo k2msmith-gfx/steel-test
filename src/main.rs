@@ -52,45 +52,33 @@ fn main() {
     vm.run("(define (sum-to n) (let loop ((i 0) (acc 0)) (if (>= i n) acc (loop (+ i 1) (+ acc i)))))").unwrap();
     bench("(sum-to 1000)   parse+eval", 1_000,  || { vm.run("(sum-to 1000)").unwrap(); });
 
+    vm.run("(define (tex u v) (* 0.5 (+ 1.0 (sin (+ (* u 6.28318530718) (* v 3.14159265359))))))").unwrap();
+    bench("tex(u,v)        parse+eval", 10_000, || { vm.run("(tex 0.5 0.3)").unwrap(); });
+
+    vm.run("(define (dot-cos ax ay az bx by bz) (cos (+ (* ax bx) (* ay by) (* az bz))))").unwrap();
+    bench("dot-cos         parse+eval", 10_000, || { vm.run("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap(); });
+
     println!("\n--- benchmarks: compile-once, run-only ---");
 
     let add_prog = vm.emit_raw_program_no_path("(+ 1 2)").unwrap();
     let fac_prog = vm.emit_raw_program_no_path("(factorial 20)").unwrap();
     let sum_prog = vm.emit_raw_program_no_path("(sum-to 1000)").unwrap();
+    let tex_prog = vm.emit_raw_program_no_path("(tex 0.5 0.3)").unwrap();
+    let dc_prog  = vm.emit_raw_program_no_path("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap();
 
     bench("(+ 1 2)         run-only", 10_000, || { vm.run_raw_program(add_prog.clone()).unwrap(); });
     bench("(factorial 20)  run-only", 10_000, || { vm.run_raw_program(fac_prog.clone()).unwrap(); });
     bench("(sum-to 1000)   run-only", 1_000,  || { vm.run_raw_program(sum_prog.clone()).unwrap(); });
+    bench("tex(u,v)        run-only", 10_000, || { vm.run_raw_program(tex_prog.clone()).unwrap(); });
+    bench("dot-cos         run-only", 10_000, || { vm.run_raw_program(dc_prog.clone()).unwrap();  });
 
-    println!("\n--- benchmarks: call_function_by_name_with_args ---");
+    println!("\n--- benchmarks: call_function_by_name_with_args (v3) ---");
 
-    vm.run("(define (tex u v) (* 0.5 (+ 1.0 (sin (+ (* u 6.28318530718) (* v 3.14159265359))))))").unwrap();
-
-    // Pre-box the arguments as SteelVal outside the timed loop.
     let u = SteelVal::NumV(0.5);
     let v = SteelVal::NumV(0.3);
 
-    // For comparison: the same paths as ECL.
-    bench("tex(u,v)  parse+eval      ", 10_000,  || { vm.run("(tex 0.5 0.3)").unwrap(); });
-
-    let tex_prog = vm.emit_raw_program_no_path("(tex 0.5 0.3)").unwrap();
-    bench("tex(u,v)  run-only        ", 10_000,  || { vm.run_raw_program(tex_prog.clone()).unwrap(); });
-
     bench("tex(u,v)  call_fn_by_name ", 100_000, || {
         vm.call_function_by_name_with_args("tex", vec![u.clone(), v.clone()]).unwrap();
-    });
-
-    println!("\n--- benchmarks: dot_cos(a, b) ---");
-
-    vm.run("(define (dot-cos ax ay az bx by bz) (cos (+ (* ax bx) (* ay by) (* az bz))))").unwrap();
-
-    bench("dot-cos  parse+eval      ", 10_000, || {
-        vm.run("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap();
-    });
-
-    let dc_prog = vm.emit_raw_program_no_path("(dot-cos 0.6 0.8 0.0 0.8 0.6 0.0)").unwrap();
-    bench("dot-cos  run-only        ", 10_000, || {
-        vm.run_raw_program(dc_prog.clone()).unwrap();
     });
 
     let ax = SteelVal::NumV(0.6);
@@ -107,9 +95,39 @@ fn main() {
         ).unwrap();
     });
 
-    let result = vm.call_function_by_name_with_args(
-        "dot-cos",
-        vec![ax.clone(), ay.clone(), az.clone(), bx.clone(), by.clone(), bz.clone()],
-    ).unwrap();
+    println!("\n--- benchmarks: extract_value + call_function_with_args_from_mut_slice (v4) ---");
+
+    // Pre-resolve named functions once; call_function_with_args_from_mut_slice
+    // skips string lookup and Vec allocation on each call.
+    vm.run("(define (badd) (+ 1 2))").unwrap();
+    let fn_add = vm.extract_value("badd").expect("badd not defined");
+    let fn_fac = vm.extract_value("factorial").expect("factorial not defined");
+    let fn_sum = vm.extract_value("sum-to").expect("sum-to not defined");
+    let fn_tex = vm.extract_value("tex").expect("tex not defined");
+    let fn_dc  = vm.extract_value("dot-cos").expect("dot-cos not defined");
+
+    let arg20   = SteelVal::IntV(20);
+    let arg1000 = SteelVal::IntV(1000);
+
+    bench("(+ 1 2)         call-fn  ", 100_000, || {
+        vm.call_function_with_args_from_mut_slice(fn_add.clone(), &mut []).unwrap();
+    });
+    bench("(factorial 20)  call-fn  ", 100_000, || {
+        vm.call_function_with_args_from_mut_slice(fn_fac.clone(), &mut [arg20.clone()]).unwrap();
+    });
+    bench("(sum-to 1000)   call-fn  ",  10_000, || {
+        vm.call_function_with_args_from_mut_slice(fn_sum.clone(), &mut [arg1000.clone()]).unwrap();
+    });
+    bench("tex(u,v)        call-fn  ", 100_000, || {
+        vm.call_function_with_args_from_mut_slice(fn_tex.clone(), &mut [u.clone(), v.clone()]).unwrap();
+    });
+    bench("dot-cos         call-fn  ", 100_000, || {
+        let mut args = [ax.clone(), ay.clone(), az.clone(), bx.clone(), by.clone(), bz.clone()];
+        vm.call_function_with_args_from_mut_slice(fn_dc.clone(), &mut args).unwrap();
+    });
+
+    let result = vm.call_function_with_args_from_mut_slice(fn_dc.clone(), &mut [
+        ax.clone(), ay.clone(), az.clone(), bx.clone(), by.clone(), bz.clone(),
+    ]).unwrap();
     println!("\ndot-cos(0.6,0.8,0, 0.8,0.6,0) = {result:?}");
 }
